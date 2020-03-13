@@ -1,151 +1,104 @@
 #include <Eigen/Dense>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <vector>
 
-class Bond {
-public:
-    const double force_constant;
-    const double equilibrium_distance;
-    const int first_atom;
-    const int second_atom;
-    const Eigen::Vector2d rail;
-    Bond(double force_constant, double equilibrium_distance, int first_atom, int second_atom,
-         Eigen::Vector2d rail)
-        : force_constant(force_constant)
-        , equilibrium_distance(equilibrium_distance)
-        , first_atom(first_atom)
-        , second_atom(second_atom)
-        , rail(rail.normalized()) {};
+#include "yaml-cpp/yaml.h"
 
-    Eigen::Vector2d project_onto_rail(const Eigen::Vector2d& input) const {
-        return input.dot(rail) * rail;
-    }
-    Eigen::Vector2d force(const Eigen::MatrixXd& positions) const {
-        Eigen::Vector2d separation = positions.row(first_atom) - positions.row(second_atom);
-        Eigen::Vector2d force_direction = force_constant * (separation - (rail * equilibrium_distance));
-        return project_onto_rail(force_direction);
-    }
-
-    double energy(const Eigen::MatrixXd& positions) const {
-
-        double distance = (positions.row(first_atom) - positions.row(second_atom)).norm();
-        double distance_from_eqm = (distance - equilibrium_distance);
-        return distance_from_eqm * distance_from_eqm * force_constant;
-    }
-};
+#include "bond.h"
+#include "constants.h"
+#include "file_io.h"
 
 Eigen::MatrixXd normalise_vectors(Eigen::MatrixXd& vectors) {
     return vectors.rowwise().normalized();
 }
 
-Eigen::MatrixXd calculate_forces(const std::vector<Bond>& bonds, const Eigen::MatrixXd& positions) {
+Eigen::MatrixXd calculate_forces(const std::vector<std::unique_ptr<Bond>>& bonds,
+                                 const Eigen::MatrixXd& positions) {
     Eigen::MatrixXd forces = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
     for (const auto& bond : bonds) {
-        Eigen::Vector2d bond_force = bond.force(positions);
-        forces.row(bond.first_atom) -= bond_force;
-        forces.row(bond.second_atom) += bond_force;
+        Eigen::VectorXd bond_force = bond->force(positions);
+        forces.row(bond->atoms[0]) -= bond_force;
+        forces.row(bond->atoms[1]) += bond_force;
     }
     return forces;
 }
 
 Eigen::MatrixXd velocity_verlet(Eigen::MatrixXd& positions, Eigen::MatrixXd& velocities,
-                                Eigen::MatrixXd& accelerations, const double dt,
-                                const std::vector<Bond>& bonds) {
+                                Eigen::MatrixXd& accelerations, Eigen::VectorXd& masses,
+                                const double dt, const std::vector<std::unique_ptr<Bond>>& bonds) {
     positions += velocities * dt + (0.5 * accelerations * dt * dt);
     Eigen::MatrixXd new_accelerations = calculate_forces(bonds, positions);
+    // TODO: Speed this up by using Eigen array
+    for (int i = 0; i < new_accelerations.rows(); ++i) {
+        new_accelerations.row(i) /= masses[i];
+    }
     velocities += 0.5 * (accelerations + new_accelerations) * dt;
     accelerations = new_accelerations;
     return positions;
 }
 
-void write_xyz(const std::string& filename, const Eigen::MatrixXd& positions,
-               const Eigen::MatrixXd& velocities, const Eigen::MatrixXd& accelerations,
-               const int step) {
-    auto output_file = std::ofstream(filename, std::ios::app);
-
-    output_file << positions.rows() << "\n";
-    output_file << "# FRAME " << step << "\n";
-    std::array ELEMENTS { "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne" };
-    for (int i = 0; i < positions.rows(); ++i) {
-        output_file << ELEMENTS[i] << "\t" << positions.row(i) << "\t0.0\t" << velocities.row(i)
-                    << "\t0.0\t" << accelerations.row(i) << "\t 0.0 \t"
-                    << "\n";
-    }
+void excite_bond(const std::unique_ptr<Bond>& bond, Eigen::MatrixXd& positions,
+                 double excitement_factor) {
+    const Eigen::VectorXd displacement_vector
+        = bond->rail * bond->equilibrium_distance * excitement_factor * -1;
+    const Eigen::VectorXd old_position = positions.row(bond->atoms[0]);
+    positions.row(bond->atoms[1]) = old_position + displacement_vector;
 }
 
-Eigen::MatrixXd load_positions(const std::string& filename) {
-    std::ifstream input_file {filename};
-    if (! input_file.good()) {
-        throw std::runtime_error("Could not open " + filename);
-    }
-
-    std::vector<Eigen::Vector2d> positions_vec;
-    while (true) {
-        std::string line;
-        std::getline(input_file, line);
-        if (input_file.eof()) {
-            break;
-        }
-        std::cout << line << "\n";
-        Eigen::Vector2d pos_vec;
-        std::istringstream iss{line};
-        iss >> pos_vec[0];
-        iss >> pos_vec[1];
-        if (iss.fail()) {
-            throw std::runtime_error("Could not convert " + line);
-        }
-        positions_vec.push_back(std::move(pos_vec));
-    }
-    Eigen::MatrixXd positions(positions_vec.size(), 2);
-    for (int i = 0; i < static_cast<int>(positions_vec.size()); ++i) {
-        positions.row(i) = std::move(positions_vec[i]);
-    }
-    return positions;
-}
-
-std::vector<Bond> load_bonds(const std::string& filename, const Eigen::ArrayXXd& positions) {
-    //! Load bond data from a file.
-
-    std::vector<Bond> bonds;
-    std::ifstream input_file{filename};
-    if (! input_file.good()) {
-        throw std::runtime_error("Could not open " + filename);
-    }
-
-    while (true) {
-        std::string line;
-        std::getline(input_file, line);
-        if (input_file.eof()) {
-            break;
-        }
-        double equilibrium_distance;
-        double force_constant;
-        int first_atom;
-        int second_atom;
-
-        std::istringstream iss{line};
-        iss >> equilibrium_distance;
-        iss >> force_constant;
-        iss >> first_atom;
-        iss >> second_atom;
-
-        bonds.emplace_back(equilibrium_distance, force_constant, first_atom, second_atom,
-                           positions.row(first_atom) - positions.row(second_atom));
-    }
-    return bonds;
-}
 int main() {
-    {
-        Eigen::MatrixXd positions = load_positions("positions.dat");
-        auto bonds = load_bonds("bonds.dat", positions);
 
-        Eigen::MatrixXd velocities = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
-        Eigen::MatrixXd accelerations = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
-        std::ofstream output_file { "test.xyz" };
-        for (int step = 0; step < 10000; ++step) {
-            velocity_verlet(positions, velocities, accelerations, 0.01, bonds);
-            write_xyz("test.xyz", positions, velocities, accelerations, step);
+    YAML::Node config = YAML::LoadFile("config.yaml");
+    const std::string positionfile = config["positionfile"].as<std::string>();
+    const std::string bondfile = config["bondfile"].as<std::string>();
+    const std::string outputfile = config["outputfile"]["filename"].as<std::string>();
+    const int output_frequency = config["outputfile"]["frequency"].as<int>();
+    const double timestep = config["simulation"]["timestep"].as<double>();
+    const int number_steps = config["simulation"]["steps"].as<int>();
+
+    constexpr auto unit_type = UnitType::ARBITRARY;
+    auto [positions, atom_names] = load_positions(positionfile, unit_type, 3);
+    auto bonds = load_bonds(bondfile, positions, atom_names);
+    Eigen::VectorXd masses = load_masses(atom_names, unit_type);
+    Eigen::MatrixXd velocities = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
+    Eigen::MatrixXd accelerations = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
+
+    for (const auto& excitement : config["excitements"]) {
+        const auto atom_a_name = excitement["atoms"][0].as<std::string>();
+        const int atom_a_id = std::distance(
+            atom_names.begin(), std::find(atom_names.begin(), atom_names.end(), atom_a_name));
+
+        const auto atom_b_name = excitement["atoms"][1].as<std::string>();
+        const int atom_b_id = std::distance(
+            atom_names.begin(), std::find(atom_names.begin(), atom_names.end(), atom_b_name));
+
+        // Now find the correct bond.
+        auto correct_bond = std::find_if(bonds.begin(), bonds.end(), [atom_a_id, atom_b_id](const auto& bond){
+            return (bond->atoms[0] == atom_a_id) && (bond->atoms[1] == atom_b_id);
+        });
+        excite_bond(*correct_bond, positions, excitement["factor"].as<double>());
+
+        std::cout << "Exciting a bond between " << atom_a_name << " and " << atom_b_name << "\n";
+    }
+    std::ofstream output_file { outputfile };
+    std::ofstream bond_excitement_file { "bonds.csv" };
+    for (const auto& bond : bonds) {
+        bond_excitement_file << atom_names[bond->atoms[0]] << "->" << atom_names[bond->atoms[1]]
+                             << ",";
+    }
+    bond_excitement_file << "\n";
+    for (int step = 0; step < number_steps; ++step) {
+        velocity_verlet(positions, velocities, accelerations, masses, timestep, bonds);
+        if (step % 1000 == 0 ){
+            std::cout << "Step " << step << "\n";
+        }
+        if (step % output_frequency == 0) {
+            write_xyz(outputfile, positions, velocities, accelerations, step, atom_names);
+            for (const auto& bond : bonds) {
+                bond_excitement_file << bond->get_excitement_factor(positions) << ",";
+            }
+            bond_excitement_file << "\n";
         }
     }
     return 0;
