@@ -1,12 +1,13 @@
 #include "bond.h"
 #include <Eigen/Dense>
+#include <iostream>
 
 Bond::Bond(double force_constant, double equilibrium_distance, int first_atom, int second_atom,
            Eigen::VectorXd rail)
     : force_constant(force_constant)
     , equilibrium_distance(equilibrium_distance)
     , atoms { first_atom, second_atom }
-    , rail(rail.normalized()) {}
+    , rail {rail.normalized()} {}
 
 Eigen::VectorXd Bond::project_onto_rail(const Eigen::VectorXd& input) const {
     //! Project a given vector onto this bond rail
@@ -27,10 +28,11 @@ double Bond::get_excitement_factor(const Eigen::MatrixXd& positions) const {
 HarmonicBond::HarmonicBond(double force_constant, double equilibrium_distance, int first_atom,
                            int second_atom, Eigen::VectorXd rail)
     : Bond(force_constant, equilibrium_distance, first_atom, second_atom, rail) {}
+
 Eigen::VectorXd HarmonicBond::force(const Eigen::MatrixXd& positions) const {
     const Eigen::VectorXd separation = positions.row(atoms[0]) - positions.row(atoms[1]);
     const Eigen::VectorXd force_direction
-        = force_constant * (separation - (rail * equilibrium_distance));
+            = force_constant * (separation - (rail * equilibrium_distance));
     return project_onto_rail(force_direction);
 }
 

@@ -3,53 +3,31 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include <string_view>
 
 #include "yaml-cpp/yaml.h"
 
 #include "bond.h"
 #include "constants.h"
 #include "file_io.h"
+#include "velocity_verlet.h"
 
-Eigen::MatrixXd normalise_vectors(Eigen::MatrixXd& vectors) {
-    return vectors.rowwise().normalized();
-}
+const std::string DEFAULT_CONFIG_FILE{"config.yaml"};
 
-Eigen::MatrixXd calculate_forces(const std::vector<std::unique_ptr<Bond>>& bonds,
-                                 const Eigen::MatrixXd& positions) {
-    Eigen::MatrixXd forces = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
-    for (const auto& bond : bonds) {
-        Eigen::VectorXd bond_force = bond->force(positions);
-        forces.row(bond->atoms[0]) -= bond_force;
-        forces.row(bond->atoms[1]) += bond_force;
+int main(int argc, char** argv) {
+    std::string config_filename;
+    if (argc > 1) {
+        config_filename = argv[1];
+    } else {
+        config_filename = DEFAULT_CONFIG_FILE;
     }
-    return forces;
-}
-
-Eigen::MatrixXd velocity_verlet(Eigen::MatrixXd& positions, Eigen::MatrixXd& velocities,
-                                Eigen::MatrixXd& accelerations, Eigen::VectorXd& masses,
-                                const double dt, const std::vector<std::unique_ptr<Bond>>& bonds) {
-    positions += velocities * dt + (0.5 * accelerations * dt * dt);
-    Eigen::MatrixXd new_accelerations = calculate_forces(bonds, positions);
-    // TODO: Speed this up by using Eigen array
-    for (int i = 0; i < new_accelerations.rows(); ++i) {
-        new_accelerations.row(i) /= masses[i];
+    YAML::Node config;
+    try {
+         config = YAML::LoadFile(config_filename);
+    } catch (const YAML::BadFile& ex) {
+         std::cerr << "Could not open " << config_filename << ". Is it present in this directory?\n";
+         throw ex;
     }
-    velocities += 0.5 * (accelerations + new_accelerations) * dt;
-    accelerations = new_accelerations;
-    return positions;
-}
-
-void excite_bond(const std::unique_ptr<Bond>& bond, Eigen::MatrixXd& positions,
-                 double excitement_factor) {
-    const Eigen::VectorXd displacement_vector
-        = bond->rail * bond->equilibrium_distance * excitement_factor * -1;
-    const Eigen::VectorXd old_position = positions.row(bond->atoms[0]);
-    positions.row(bond->atoms[1]) = old_position + displacement_vector;
-}
-
-int main() {
-
-    YAML::Node config = YAML::LoadFile("config.yaml");
     const std::string positionfile = config["positionfile"].as<std::string>();
     const std::string bondfile = config["bondfile"].as<std::string>();
     const std::string outputfile = config["outputfile"]["filename"].as<std::string>();
@@ -66,12 +44,10 @@ int main() {
 
     for (const auto& excitement : config["excitements"]) {
         const auto atom_a_name = excitement["atoms"][0].as<std::string>();
-        const int atom_a_id = std::distance(
-            atom_names.begin(), std::find(atom_names.begin(), atom_names.end(), atom_a_name));
+        const int atom_a_id = atom_name_to_id(atom_names.begin(), atom_names.end(), atom_a_name);
 
         const auto atom_b_name = excitement["atoms"][1].as<std::string>();
-        const int atom_b_id = std::distance(
-            atom_names.begin(), std::find(atom_names.begin(), atom_names.end(), atom_b_name));
+        const int atom_b_id = atom_name_to_id(atom_names.begin(), atom_names.end(), atom_b_name);
 
         // Now find the correct bond.
         auto correct_bond = std::find_if(bonds.begin(), bonds.end(), [atom_a_id, atom_b_id](const auto& bond){
