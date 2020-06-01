@@ -11,6 +11,18 @@
 #include <tuple>
 #include <vector>
 namespace {
+
+bool str_starts_with(const std::string& input, const std::string& prefix){
+    //! Overload for missing standard library functions while we wait for C++20
+    return input.rfind(prefix, 0) == 0;
+}
+
+template <typename Container>
+constexpr bool str_contains(const Container& input, const std::string& substr){
+    //! Overload for missing standard library functions while we wait for C++20
+    return input.find(substr) != input.end();
+}
+
 std::unique_ptr<HarmonicBond> construct_harmonic_bond(std::istringstream& iss,
                                                       const Eigen::ArrayXXd& positions,
                                                       const std::vector<std::string>& atom_names,
@@ -89,7 +101,7 @@ std::string atom_name_to_element(const std::string& input, const char comment = 
         elem = remove_numbers(input);
     }
 
-    if (!valid_elements.contains(elem)) {
+    if (!str_contains(valid_elements, elem)) {
         throw std::runtime_error("Could not convert " + input + " to a valid element.");
     }
     return elem;
@@ -204,11 +216,11 @@ std::vector<std::unique_ptr<Bond>> load_bonds(const std::string& filename,
     std::getline(input_file, units_line);
     ++lines_read;
     UnitType unit_type;
-    if (units_line.starts_with("atomic")) {
+    if (str_starts_with(units_line, "atomic")) {
         unit_type = UnitType::ATOMIC;
-    } else if (units_line.starts_with("real")) {
+    } else if (str_starts_with(units_line, "real")) {
         unit_type = UnitType::REAL;
-    } else if (units_line.starts_with("arbitrary")) {
+    } else if (str_starts_with(units_line, "arbitrary"))  {
         unit_type = UnitType::ARBITRARY;
     } else {
         throw std::runtime_error("Line " + std::to_string(lines_read) + ":Could not convert " + units_line + " to a units type. Expected: atomic, real, arbitrary");
