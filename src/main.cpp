@@ -78,11 +78,15 @@ int main(int argc, char** argv) {
     for (int step = 0; step < number_steps; ++step) {
         velocity_verlet(positions, velocities, accelerations, masses, timestep, bonds);
         if (step % 1000 == 0 ) {
-            const auto potential_energy = std::transform_reduce(bonds.begin(),
-                                                            bonds.end(),
-                                                            0.0,
-                                                            std::plus<>(),
-                                                            [positions](const auto& bond){ return bond->energy(positions); });
+            std::vector<double> potential_energies;
+            potential_energies.reserve(bonds.size());
+            std::transform(bonds.begin(), bonds.end(), std::back_inserter(potential_energies),
+            [positions](const auto& bond){ return bond->energy(positions);});
+            
+            const auto potential_energy = std::accumulate(potential_energies.begin(),
+                                                          potential_energies.end(),
+                                                            0.0
+                                                           );
             double kinetic_energy = 0.0;
             for (int atom = 0; atom < velocities.cols(); ++atom) {
                 kinetic_energy += 0.5 * masses[atom] * velocities.row(atom).squaredNorm();
