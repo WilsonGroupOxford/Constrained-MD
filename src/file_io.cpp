@@ -110,8 +110,8 @@ std::tuple<Eigen::MatrixXd, std::vector<std::string>> load_positions(const std::
      *! \param unit_type the units to adjust these into
      *! \param dimension can be 2D or 3D, represents the dimensionality of the simulation
      */
-    if (dimension != 2 || dimension != 3) {
-        throw std::runtime_error("Dimension must be 2 or 3.");
+    if (dimension != 2 && dimension != 3) {
+        throw std::runtime_error("Dimension must be 2 or 3. Instead we got " + std::to_string(dimension));
     }
     std::ifstream input_file { filename };
     if (!input_file.good()) {
@@ -192,6 +192,8 @@ std::vector<std::unique_ptr<Bond>> load_bonds(const std::string& filename,
      *! \param unit_type an enum dictating the unit system of the file.
      *! \return bonds an iterable of all the bonds in the system.
      */
+
+    int lines_read = 0;
     std::vector<std::unique_ptr<Bond>> bonds;
     bonds.reserve(positions.rows());
     std::ifstream input_file { filename };
@@ -200,6 +202,7 @@ std::vector<std::unique_ptr<Bond>> load_bonds(const std::string& filename,
     }
     std::string units_line;
     std::getline(input_file, units_line);
+    ++lines_read;
     UnitType unit_type;
     if (units_line.starts_with("atomic")) {
         unit_type = UnitType::ATOMIC;
@@ -208,11 +211,14 @@ std::vector<std::unique_ptr<Bond>> load_bonds(const std::string& filename,
     } else if (units_line.starts_with("arbitrary")) {
         unit_type = UnitType::ARBITRARY;
     } else {
-        throw std::runtime_error("Could not convert " + units_line + " to a units type.");
+        throw std::runtime_error("Line " + std::to_string(lines_read) + ":Could not convert " + units_line + " to a units type. Expected: atomic, real, arbitrary");
     }
+   
+
     while (true) {
         std::string line;
         std::getline(input_file, line);
+        ++lines_read;
         if (input_file.eof()) {
             break;
         }
@@ -224,7 +230,7 @@ std::vector<std::unique_ptr<Bond>> load_bonds(const std::string& filename,
         if (bond_type_str == "harmonic") {
             bond_type = BondType::HARMONIC;
         } else {
-            throw std::runtime_error("Could not convert " + bond_type_str + " to a bond type.");
+            throw std::runtime_error("Line " + std::to_string(lines_read) + ": Could not convert " + bond_type_str + " to a bond type.");
         }
 
         switch (bond_type) {

@@ -17,6 +17,7 @@ Eigen::VectorXd Bond::project_onto_rail(const Eigen::VectorXd& input) const {
      */
     return input.dot(rail) * rail;
 }
+
 double Bond::get_excitement_factor(const Eigen::MatrixXd& positions) const {
     Eigen::VectorXd separation = positions.row(atoms[0]) - positions.row(atoms[1]);
     separation = project_onto_rail(separation);
@@ -36,8 +37,17 @@ Eigen::VectorXd HarmonicBond::force(const Eigen::MatrixXd& positions) const {
     return project_onto_rail(force_direction);
 }
 
+double HarmonicBond::frequency(const Eigen::VectorXd& masses) const {
+    const auto reduced_mass = masses[atoms[0]] * masses[atoms[1]] / (masses[atoms[0]] + masses[atoms[1]]);
+    return std::sqrt(force_constant / reduced_mass);
+}
+
+double HarmonicBond::period(const Eigen::VectorXd& masses) const {
+    return 2 * M_PI / frequency(masses);
+}
+
 double HarmonicBond::energy(const Eigen::MatrixXd& positions) const {
-    double distance = (positions.row(atoms[0]) - positions.row(atoms[1])).norm();
+    double distance = project_onto_rail(positions.row(atoms[0]) - positions.row(atoms[1])).norm();
     double distance_from_eqm = (distance - equilibrium_distance);
     return distance_from_eqm * distance_from_eqm * force_constant;
 }

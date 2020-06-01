@@ -8,8 +8,8 @@ outputfile:
 
 #Simulation settings
 simulation:
-    timestep: 1
-    steps: 500000
+    timestep: 1.4
+    steps: 5000000
 
 excitements:
     - atoms: [Au%1, C%1]

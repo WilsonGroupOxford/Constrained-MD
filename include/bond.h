@@ -54,6 +54,8 @@ public:
 
     virtual Eigen::VectorXd force(const Eigen::MatrixXd& positions) const = 0;
     virtual double energy(const Eigen::MatrixXd& positions) const = 0;
+    virtual double frequency(const Eigen::VectorXd& masses) const = 0;
+    virtual double period(const Eigen::VectorXd& masses) const = 0;
 };
 
 class HarmonicBond : public Bond {
@@ -63,5 +65,7 @@ public:
     Eigen::VectorXd force(const Eigen::MatrixXd& positions) const override;
 
     double energy(const Eigen::MatrixXd& positions) const override;
+    double frequency(const Eigen::VectorXd& masses) const override;
+    double period(const Eigen::VectorXd& masses) const override;
 };
 #endif // BOND_H

@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <string_view>
+#include <numeric>
 
 #include "yaml-cpp/yaml.h"
 
@@ -39,6 +40,14 @@ int main(int argc, char** argv) {
     auto [positions, atom_names] = load_positions(positionfile, unit_type, 3);
     auto bonds = load_bonds(bondfile, positions, atom_names);
     Eigen::VectorXd masses = load_masses(atom_names, unit_type);
+
+    std::vector<double> bond_periods;
+    std::transform(bonds.begin(), bonds.end() , std::back_inserter(bond_periods), [masses](auto&& bond){return bond->period(masses);});
+    const double min_bond_period = *std::min_element(bond_periods.begin(), bond_periods.end());
+    if (timestep * 10 > min_bond_period) {
+        std::cerr << "Shortest bond period " << min_bond_period << " is sampled less than ten times per timestep.\n";
+    }
+
     Eigen::MatrixXd velocities = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
     Eigen::MatrixXd accelerations = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
 
@@ -59,6 +68,8 @@ int main(int argc, char** argv) {
     }
     std::ofstream output_file { outputfile };
     std::ofstream bond_excitement_file { "bonds.csv" };
+    
+    bond_excitement_file << "Time, ";
     for (const auto& bond : bonds) {
         bond_excitement_file << atom_names[bond->atoms[0]] << "->" << atom_names[bond->atoms[1]]
                              << ",";
@@ -66,13 +77,24 @@ int main(int argc, char** argv) {
     bond_excitement_file << "\n";
     for (int step = 0; step < number_steps; ++step) {
         velocity_verlet(positions, velocities, accelerations, masses, timestep, bonds);
-        if (step % 1000 == 0 ){
-            std::cout << "Step " << step << "\n";
+        if (step % 1000 == 0 ) {
+            const auto potential_energy = std::transform_reduce(bonds.begin(),
+                                                            bonds.end(),
+                                                            0.0,
+                                                            std::plus<>(),
+                                                            [positions](const auto& bond){ return bond->energy(positions); });
+            double kinetic_energy = 0.0;
+            for (int atom = 0; atom < velocities.cols(); ++atom) {
+                kinetic_energy += 0.5 * masses[atom] * velocities.row(atom).squaredNorm();
+            }
+            std::cout << "Step " << step << ", time = " << step * timestep << ", PE = " << potential_energy << ", KE = "
+<< kinetic_energy << " TE = " << potential_energy + kinetic_energy  << "\n";
         }
         if (step % output_frequency == 0) {
             write_xyz(outputfile, positions, velocities, accelerations, step, atom_names);
+            bond_excitement_file << step * timestep << ", ";
             for (const auto& bond : bonds) {
-                bond_excitement_file << bond->get_excitement_factor(positions) << ",";
+                bond_excitement_file << bond->get_excitement_factor(positions)<< ",";
             }
             bond_excitement_file << "\n";
         }
