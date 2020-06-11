@@ -56,6 +56,10 @@ public:
     virtual double energy(const Eigen::MatrixXd& positions) const = 0;
     virtual double frequency(const Eigen::VectorXd& masses) const = 0;
     virtual double period(const Eigen::VectorXd& masses) const = 0;
+    friend std::ostream& operator<< (std::ostream& os, const Bond& bond) {
+        os << "Bond k= " << bond.force_constant << ", l= " << bond.equilibrium_distance;
+        return os;
+    };
 };
 
 class HarmonicBond : public Bond {

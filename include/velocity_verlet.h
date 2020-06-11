@@ -11,12 +11,17 @@
 
 Eigen::MatrixXd calculate_forces(const std::vector<std::unique_ptr<Bond>>& bonds,
                                  const Eigen::MatrixXd& positions);
+                                 
+
+Eigen::MatrixXd calculate_accelerations(const std::vector<std::unique_ptr<Bond>>& bonds,
+                                 const Eigen::MatrixXd& positions,
+                                 const Eigen::MatrixXd& masses);                                
 
 Eigen::MatrixXd velocity_verlet(Eigen::MatrixXd& positions, Eigen::MatrixXd& velocities,
                                 Eigen::MatrixXd& accelerations, const Eigen::VectorXd& masses,
                                 const double dt, const std::vector<std::unique_ptr<Bond>>& bonds);
 
-void excite_bond(const std::unique_ptr<Bond>& bond, Eigen::MatrixXd& positions,
-                 double excitement_factor);
+void excite_bond(const std::unique_ptr<Bond>& bond, Eigen::MatrixXd& positions, const Eigen::MatrixXd& masses,
+                 const double excitement_factor);
 
 #endif

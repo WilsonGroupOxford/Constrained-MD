@@ -2,6 +2,8 @@
 #include <Eigen/Dense>
 #include <iostream>
 
+constexpr bool DO_PROJECTION = true;
+
 Bond::Bond(double force_constant, double equilibrium_distance, int first_atom, int second_atom,
            Eigen::VectorXd rail)
     : force_constant(force_constant)
@@ -15,7 +17,10 @@ Eigen::VectorXd Bond::project_onto_rail(const Eigen::VectorXd& input) const {
      *! \param input the vector to do the projection of
      *! \return projected the component of the vector in the direction of the rail
      */
-    return input.dot(rail) * rail;
+    if constexpr (DO_PROJECTION) {
+        return input.dot(rail) * rail;
+    }
+    return input;
 }
 
 double Bond::get_excitement_factor(const Eigen::MatrixXd& positions) const {
@@ -32,8 +37,12 @@ HarmonicBond::HarmonicBond(double force_constant, double equilibrium_distance, i
 
 Eigen::VectorXd HarmonicBond::force(const Eigen::MatrixXd& positions) const {
     const Eigen::VectorXd separation = positions.row(atoms[0]) - positions.row(atoms[1]);
-    const Eigen::VectorXd force_direction
-            = force_constant * (separation - (rail * equilibrium_distance));
+    auto magnitude = separation.norm();
+    const Eigen::VectorXd direction = separation / magnitude;
+    double extension = magnitude - equilibrium_distance;
+    
+    const Eigen::VectorXd force_direction = force_constant * extension * direction;
+    
     return project_onto_rail(force_direction);
 }
 
@@ -47,7 +56,6 @@ double HarmonicBond::period(const Eigen::VectorXd& masses) const {
 }
 
 double HarmonicBond::energy(const Eigen::MatrixXd& positions) const {
-    double distance = project_onto_rail(positions.row(atoms[0]) - positions.row(atoms[1])).norm();
-    double distance_from_eqm = (distance - equilibrium_distance);
-    return distance_from_eqm * distance_from_eqm * force_constant;
+    const auto stretch_ratio = get_excitement_factor(positions) - 1.0;
+    return  stretch_ratio * stretch_ratio * force_constant * equilibrium_distance * equilibrium_distance / 2.0;
 }

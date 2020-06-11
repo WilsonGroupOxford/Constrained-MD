@@ -12,8 +12,19 @@
 #include "constants.h"
 #include "file_io.h"
 #include "velocity_verlet.h"
+#include "energies.h"
 
 const std::string DEFAULT_CONFIG_FILE{"config.yaml"};
+
+template <typename BondIter>
+bool check_bond_sampling(BondIter bonds_begin, BondIter bonds_end, const Eigen::MatrixXd& masses, const double timestep, const float min_samples=10) {
+    std::vector<double> bond_periods;
+    std::transform(bonds_begin, bonds_end, std::back_inserter(bond_periods), [masses](auto&& bond){return bond->period(masses);});
+    const double min_bond_period = *std::min_element(bond_periods.begin(), bond_periods.end());
+    return (timestep * min_samples < min_bond_period);
+}
+
+
 
 int main(int argc, char** argv) {
     std::string config_filename;
@@ -33,23 +44,21 @@ int main(int argc, char** argv) {
     const std::string bondfile = config["bondfile"].as<std::string>();
     const std::string outputfile = config["outputfile"]["filename"].as<std::string>();
     const int output_frequency = config["outputfile"]["frequency"].as<int>();
+    const int console_frequency = config["outputfile"]["consolefrequency"].as<int>();
     const double timestep = config["simulation"]["timestep"].as<double>();
     const int number_steps = config["simulation"]["steps"].as<int>();
 
     constexpr auto unit_type = UnitType::ARBITRARY;
     auto [positions, atom_names] = load_positions(positionfile, unit_type, 3);
     auto bonds = load_bonds(bondfile, positions, atom_names);
-    Eigen::VectorXd masses = load_masses(atom_names, unit_type);
 
-    std::vector<double> bond_periods;
-    std::transform(bonds.begin(), bonds.end() , std::back_inserter(bond_periods), [masses](auto&& bond){return bond->period(masses);});
-    const double min_bond_period = *std::min_element(bond_periods.begin(), bond_periods.end());
-    if (timestep * 10 > min_bond_period) {
-        std::cerr << "Shortest bond period " << min_bond_period << " is sampled less than ten times per timestep.\n";
+    Eigen::VectorXd masses = load_masses(atom_names, unit_type);
+    if (!check_bond_sampling(bonds.begin(), bonds.end(), masses, timestep, 10)) {
+        std::cerr << "Shortest bond period is sampled less than ten times per timestep.\n";
     }
 
     Eigen::MatrixXd velocities = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
-    Eigen::MatrixXd accelerations = Eigen::MatrixXd::Zero(positions.rows(), positions.cols());
+    
 
     for (const auto& excitement : config["excitements"]) {
         const auto atom_a_name = excitement["atoms"][0].as<std::string>();
@@ -62,10 +71,14 @@ int main(int argc, char** argv) {
         auto correct_bond = std::find_if(bonds.begin(), bonds.end(), [atom_a_id, atom_b_id](const auto& bond){
             return (bond->atoms[0] == atom_a_id) && (bond->atoms[1] == atom_b_id);
         });
-        excite_bond(*correct_bond, positions, excitement["factor"].as<double>());
+        excite_bond(*correct_bond, positions, masses, excitement["factor"].as<double>());
 
         std::cout << "Exciting a bond between " << atom_a_name << " and " << atom_b_name << "\n";
     }
+    
+    // We need to set the initial accelerations to be correct.
+    Eigen::MatrixXd accelerations = calculate_accelerations(bonds, positions, masses);
+
     std::ofstream output_file { outputfile };
     std::ofstream bond_excitement_file { "bonds.csv" };
     
@@ -77,20 +90,9 @@ int main(int argc, char** argv) {
     bond_excitement_file << "\n";
     for (int step = 0; step < number_steps; ++step) {
         velocity_verlet(positions, velocities, accelerations, masses, timestep, bonds);
-        if (step % 1000 == 0 ) {
-            std::vector<double> potential_energies;
-            potential_energies.reserve(bonds.size());
-            std::transform(bonds.begin(), bonds.end(), std::back_inserter(potential_energies),
-            [positions](const auto& bond){ return bond->energy(positions);});
-            
-            const auto potential_energy = std::accumulate(potential_energies.begin(),
-                                                          potential_energies.end(),
-                                                            0.0
-                                                           );
-            double kinetic_energy = 0.0;
-            for (int atom = 0; atom < velocities.cols(); ++atom) {
-                kinetic_energy += 0.5 * masses[atom] * velocities.row(atom).squaredNorm();
-            }
+        if (step % console_frequency == 0 ) {;
+            const auto potential_energy = calculate_potential_energy(bonds, positions);
+            const auto kinetic_energy = calculate_kinetic_energy(velocities, masses);
             std::cout << "Step " << step << ", time = " << step * timestep << ", PE = " << potential_energy << ", KE = "
 << kinetic_energy << " TE = " << potential_energy + kinetic_energy  << "\n";
         }
