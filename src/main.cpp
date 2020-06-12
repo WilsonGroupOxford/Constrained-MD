@@ -1,10 +1,17 @@
+#include <complex>
+
 #include <Eigen/Dense>
+#include <fftw3.h>
+
+
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <vector>
 #include <string_view>
 #include <numeric>
+
+
 
 #include "yaml-cpp/yaml.h"
 
@@ -13,6 +20,42 @@
 #include "file_io.h"
 #include "velocity_verlet.h"
 #include "energies.h"
+
+class FFTWrapper {
+    private:
+        Eigen::VectorXd fft_input;
+        Eigen::VectorXcd fft_result;
+        fftw_plan plan;
+        
+
+    
+    public:
+    Eigen::VectorXcd calculate(const std::vector<double>& input) {
+        if (input.size() != fft_input.size()) {
+            throw std::runtime_error("The input array provided to FFTWrapper must be the same size as specified in the constructor. Got " + std::to_string(input.size()) + " vs " + std::to_string(fft_input.size()));
+        }
+        std::copy(std::begin(input), std::end(input), fft_input.data());
+        fftw_execute(plan);
+        return fft_result;
+    }
+    
+        FFTWrapper(int input_size_) : fft_input(input_size_), fft_result((input_size_ / 2) + 1), plan(fftw_plan_dft_r2c_1d(fft_input.size(), fft_input.data(), reinterpret_cast<fftw_complex*>(fft_result.data()), FFTW_DESTROY_INPUT & FFTW_PATIENT)) {};
+    
+    ~FFTWrapper() {
+        fftw_destroy_plan(plan);
+    }
+
+};
+
+namespace Eigen {
+    auto begin(VectorXcd vec) -> decltype(vec.data()) {
+        return vec.data();
+    }
+    
+    auto end(VectorXcd vec) -> decltype(vec.data()) {
+        return vec.data() + vec.size();
+    }
+}
 
 const std::string DEFAULT_CONFIG_FILE{"config.yaml"};
 
@@ -24,7 +67,20 @@ bool check_bond_sampling(BondIter bonds_begin, BondIter bonds_end, const Eigen::
     return (timestep * min_samples < min_bond_period);
 }
 
+std::vector<std::complex<double>> calculate_excitement_fft(const std::vector<double>& excitements) {
 
+    // Set up empty input and output vectors for FFTW to mangle.
+    std::vector<double> fft_input(excitements.size());
+    auto out_size = (excitements.size() / 2) + 1;
+    std::vector<std::complex<double>> fft_results(out_size);
+    
+    // We'll want to move this plan out of the function later so we can reuse it.
+    auto plan = fftw_plan_dft_r2c_1d(fft_input.size(), fft_input.data(), reinterpret_cast<fftw_complex*>(fft_results.data()), FFTW_ESTIMATE);
+    std::copy(excitements.begin(), excitements.end(), fft_input.begin());
+    fftw_execute(plan);
+    fftw_destroy_plan(plan);
+    return fft_results;
+}
 
 int main(int argc, char** argv) {
     std::string config_filename;
@@ -48,6 +104,10 @@ int main(int argc, char** argv) {
     const double timestep = config["simulation"]["timestep"].as<double>();
     const int number_steps = config["simulation"]["steps"].as<int>();
 
+    const int fft_to_ignore = config["fft"]["ignore_steps"].as<int>();
+    const int fft_frequency = config["fft"]["frequency"].as<int>();
+    const std::string fft_filename = config["fft"]["filename"].as<std::string>();
+    
     constexpr auto unit_type = UnitType::ARBITRARY;
     auto [positions, atom_names] = load_positions(positionfile, unit_type, 3);
     auto bonds = load_bonds(bondfile, positions, atom_names);
@@ -88,8 +148,23 @@ int main(int argc, char** argv) {
                              << ",";
     }
     bond_excitement_file << "\n";
+
+
+    auto fft_wrapper = FFTWrapper(fft_frequency);
+    
+    std::vector<std::vector<double>> excitements_vec(bonds.size());
+     
+    std::vector<Eigen::VectorXcd> total_freq_vector(bonds.size());
+    for (int i = 0; i < bonds.size(); ++i) {
+        total_freq_vector[i] = Eigen::VectorXcd::Zero((fft_frequency / 2) + 1);
+        excitements_vec[i] = std::vector<double>(fft_frequency);
+    }
+    
+    int fft_samples_taken = 0;
+    
     for (int step = 0; step < number_steps; ++step) {
         velocity_verlet(positions, velocities, accelerations, masses, timestep, bonds);
+
         if (step % console_frequency == 0 ) {;
             const auto potential_energy = calculate_potential_energy(bonds, positions);
             const auto kinetic_energy = calculate_kinetic_energy(velocities, masses);
@@ -104,6 +179,40 @@ int main(int argc, char** argv) {
             }
             bond_excitement_file << "\n";
         }
+        
+        if ((step - fft_to_ignore) % fft_frequency == 0 && step - fft_to_ignore > 0) {
+            for (int j = 0; j < bonds.size(); ++j) {
+                Eigen::VectorXcd ret_vec = fft_wrapper.calculate(excitements_vec[j]);
+                total_freq_vector[j] += ret_vec;
+            }
+            fft_samples_taken++;
+        }
+        
+        // Do this after we've output lest we write over the first element.
+        if (step > fft_to_ignore) {
+            for (int j = 0; j < bonds.size(); ++j) {
+                excitements_vec[j][step % fft_frequency] = bonds[j]->get_excitement_factor(positions) - 1.0;
+            }
+        }
     }
-    return 0;
+    
+    // Some final outputting.
+    for (auto& sub_vec: total_freq_vector) {
+        sub_vec /= fft_samples_taken;
+    }
+    std::ofstream fft_file{fft_filename};
+    for (int i = 0; i < total_freq_vector[0].size(); ++i) {
+        for (int bond = 0; bond < bonds.size(); ++bond) {
+            const auto item = total_freq_vector[bond][i];
+            if (item.imag() < 0.0) {
+                fft_file << item.real() << item.imag() << "j";
+            } else {
+                fft_file << item.real() << "+" << item.imag() << "j";               
+            }
+            if (bond != bonds.size() - 1) {
+                fft_file << ", ";
+            }
+        }
+        fft_file << "\n";
+    }
 }

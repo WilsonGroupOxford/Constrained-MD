@@ -17,6 +17,7 @@ target_link_libraries(Constrained-MD Eigen3::Eigen)
 find_package (yaml-cpp REQUIRED NO_MODULE)
 target_link_libraries(Constrained-MD yaml-cpp)
 
+target_link_libraries(Constrained-MD fftw3)
 target_compile_options(Constrained-MD PRIVATE -Wall -Wextra -Wpedantic)
 
 include(GoogleTest)
@@ -57,6 +58,7 @@ set_target_properties(C-MD-Test  PROPERTIES
 )
 target_link_libraries(C-MD-Test gtest_main)
 target_link_libraries(C-MD-Test Eigen3::Eigen)
+target_link_libraries(C-MD-Test fftw3)
 gtest_add_tests(TARGET C-MD-Test)
 enable_testing()
 
